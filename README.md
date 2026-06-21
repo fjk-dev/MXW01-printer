@@ -17,8 +17,8 @@ cd MXW01-Printer
 ```bash
 pip install -r requirements.txt
 ```
-python main.py
 ```bash
+python main.py
 ```
 ## Сборка в EXE
 ```bash
