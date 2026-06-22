@@ -11,34 +11,38 @@ from image_manager import ImageManager
 import bleak
 
 class InsertImageDialog(Toplevel):
-    """Диалог вставки картинки: выбор файла или ввод URL."""
-    def __init__(self, parent):
+    def __init__(self, parent, default_size=100):
         super().__init__(parent)
         self.title("Вставить изображение")
-        self.geometry("450x200")
+        self.geometry("450x250")
         self.result = None
         self.resizable(False, False)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Вкладка "Файл"
         tab_file = ttk.Frame(notebook)
         notebook.add(tab_file, text="Файл")
         ttk.Label(tab_file, text="Выберите файл изображения:").pack(pady=10)
-        btn_choose = ttk.Button(tab_file, text="Обзор...", command=self.choose_file)
-        btn_choose.pack(pady=5)
+        ttk.Button(tab_file, text="Обзор...", command=self.choose_file).pack(pady=5)
 
-        # Вкладка "Ссылка"
         tab_url = ttk.Frame(notebook)
         notebook.add(tab_url, text="Ссылка")
         ttk.Label(tab_url, text="Введите URL:").pack(pady=10)
         self.url_entry = ttk.Entry(tab_url, width=50)
         self.url_entry.pack(pady=5)
-        btn_url = ttk.Button(tab_url, text="Вставить", command=self.insert_url)
-        btn_url.pack(pady=5)
+        ttk.Button(tab_url, text="Вставить", command=self.insert_url).pack(pady=5)
 
-        # Кнопка "Отмена"
+        size_frame = ttk.Frame(self)
+        size_frame.pack(pady=5)
+        ttk.Label(size_frame, text="Размер (%):").pack(side=tk.LEFT)
+        self.size_var = tk.IntVar(value=default_size)
+        ttk.Scale(size_frame, from_=20, to=200, orient=tk.HORIZONTAL, 
+                  variable=self.size_var, length=150).pack(side=tk.LEFT, padx=5)
+        self.size_label = ttk.Label(size_frame, text="100%", width=5)
+        self.size_label.pack(side=tk.LEFT)
+        self.size_var.trace('w', lambda *args: self.size_label.config(text=f"{self.size_var.get()}%"))
+
         ttk.Button(self, text="Отмена", command=self.destroy).pack(pady=5)
 
         self.grab_set()
@@ -48,27 +52,26 @@ class InsertImageDialog(Toplevel):
         filetypes = [("Изображения", "*.png *.jpg *.jpeg *.bmp *.gif"), ("Все файлы", "*.*")]
         path = filedialog.askopenfilename(title="Выберите картинку", filetypes=filetypes)
         if path:
-            self.result = path
+            self.result = (path, self.size_var.get())
             self.destroy()
 
     def insert_url(self):
         url = self.url_entry.get().strip()
         if url:
-            self.result = url
+            self.result = (url, self.size_var.get())
             self.destroy()
 
 class PrinterApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MXW01 Bluetooth Printer")
-        self.root.geometry("900x650")
+        self.root.geometry("900x700")
         self.driver = None
         self.renderer = Renderer(font_size=20)
         self.style = ttk.Style()
-        self.preview_canvas = None          # избегаем ошибки при первом вызове set_theme
+        self.preview_canvas = None
         self.set_theme("light")
 
-        # --- Меню ---
         menubar = tk.Menu(root)
         root.config(menu=menubar)
         settings_menu = tk.Menu(menubar, tearoff=0)
@@ -76,46 +79,71 @@ class PrinterApp:
         settings_menu.add_command(label="Светлая тема", command=lambda: self.set_theme("light"))
         settings_menu.add_command(label="Тёмная тема", command=lambda: self.set_theme("dark"))
 
-        # --- Toolbar ---
         toolbar = ttk.Frame(root)
         toolbar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-        ttk.Button(toolbar, text="🔍 Сканировать", command=self.scan_devices).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🔗 Подключиться", command=self.connect_device).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🖼️ Вставить картинку", command=self.insert_image).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🖨️ Печать", command=self.print_content).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Сканировать", command=self.scan_devices).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Подключиться", command=self.connect_device).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Вставить картинку", command=self.insert_image).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Вставить QR", command=self.insert_qr).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Печать", command=self.print_content).pack(side=tk.LEFT, padx=2)
 
-        # --- Основная панель: Редактор + Предпросмотр ---
+        size_frame = ttk.Frame(toolbar)
+        size_frame.pack(side=tk.RIGHT, padx=10)
+
+        ttk.Label(size_frame, text="Текст:").pack(side=tk.LEFT)
+        self.font_size_var = tk.IntVar(value=20)
+        ttk.Scale(size_frame, from_=10, to=40, orient=tk.HORIZONTAL, 
+                  variable=self.font_size_var, length=80, 
+                  command=self.on_font_size_change).pack(side=tk.LEFT, padx=5)
+        self.font_size_label = ttk.Label(size_frame, text="20", width=2)
+        self.font_size_label.pack(side=tk.LEFT)
+
+        ttk.Separator(size_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, padx=5, fill=tk.Y)
+
+        ttk.Label(size_frame, text="QR:").pack(side=tk.LEFT)
+        self.qr_size_var = tk.IntVar(value=3)
+        ttk.Scale(size_frame, from_=1, to=10, orient=tk.HORIZONTAL, 
+                  variable=self.qr_size_var, length=80, 
+                  command=self.on_qr_size_change).pack(side=tk.LEFT, padx=5)
+        self.qr_size_label = ttk.Label(size_frame, text="3", width=2)
+        self.qr_size_label.pack(side=tk.LEFT)
+
+        ttk.Separator(size_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, padx=5, fill=tk.Y)
+
+        ttk.Label(size_frame, text="IMG:").pack(side=tk.LEFT)
+        self.img_size_var = tk.IntVar(value=100)
+        ttk.Scale(size_frame, from_=20, to=200, orient=tk.HORIZONTAL, 
+                  variable=self.img_size_var, length=80, 
+                  command=self.on_img_size_change).pack(side=tk.LEFT, padx=5)
+        self.img_size_label = ttk.Label(size_frame, text="100%", width=4)
+        self.img_size_label.pack(side=tk.LEFT)
+
         main_panel = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
         main_panel.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Левая часть: список устройств + редактор
         left_frame = ttk.Frame(main_panel)
         main_panel.add(left_frame, weight=1)
 
-        # Список устройств
         bt_frame = ttk.LabelFrame(left_frame, text="Bluetooth устройства")
         bt_frame.pack(fill=tk.X, pady=(0,5))
         self.device_listbox = tk.Listbox(bt_frame, height=4)
         self.device_listbox.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        # Редактор
         editor_frame = ttk.LabelFrame(left_frame, text="Редактор (Markdown + [IMG:...] [QR:...])")
         editor_frame.pack(fill=tk.BOTH, expand=True)
         self.text_editor = tk.Text(editor_frame, wrap=tk.WORD, font=("Consolas", 10))
         self.text_editor.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        # Правая часть: предпросмотр
         preview_frame = ttk.LabelFrame(main_panel, text="Предпросмотр")
         main_panel.add(preview_frame, weight=2)
 
-        self.preview_canvas = Canvas(preview_frame, bg='white', highlightthickness=0)
+        self.preview_canvas = Canvas(preview_frame, bg='lightgray', highlightthickness=0)
         self.preview_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Кнопки масштабирования
         preview_toolbar = ttk.Frame(preview_frame)
         preview_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(preview_toolbar, text="−", width=3, command=self.zoom_out).pack(side=tk.LEFT)
+        ttk.Button(preview_toolbar, text="-", width=3, command=self.zoom_out).pack(side=tk.LEFT)
         ttk.Button(preview_toolbar, text="+", width=3, command=self.zoom_in).pack(side=tk.LEFT)
         ttk.Button(preview_toolbar, text="Обновить", command=self.update_preview).pack(side=tk.RIGHT, padx=5)
 
@@ -123,14 +151,29 @@ class PrinterApp:
         self.preview_tk = None
         self.scale_factor = 1.0
 
-        # Статус-бар
         self.status_var = tk.StringVar(value="Готов")
         status_bar = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # Привязка событий
         self.text_editor.bind("<KeyRelease>", lambda e: self.auto_preview())
         self.auto_preview_timer = None
+
+    def on_font_size_change(self, value):
+        size = int(float(value))
+        self.font_size_var.set(size)
+        self.font_size_label.config(text=str(size))
+        self.renderer.font_size = size
+        self.renderer._init_fonts()
+
+    def on_qr_size_change(self, value):
+        size = int(float(value))
+        self.qr_size_var.set(size)
+        self.qr_size_label.config(text=str(size))
+
+    def on_img_size_change(self, value):
+        size = int(float(value))
+        self.img_size_var.set(size)
+        self.img_size_label.config(text=f"{size}%")
 
     def set_theme(self, theme):
         if theme == "dark":
@@ -147,9 +190,8 @@ class PrinterApp:
             fg = "black"
             self.style.configure(".", background=bg, foreground=fg)
             if self.preview_canvas:
-                self.preview_canvas.config(bg='white')
+                self.preview_canvas.config(bg='lightgray')
 
-    # --- Bluetooth ---
     def async_task(self, coro, callback=None, error_callback=None):
         def runner():
             loop = asyncio.new_event_loop()
@@ -197,15 +239,19 @@ class PrinterApp:
             self.status_var.set(f"Подключено к {addr}")
         self.async_task(connect(), on_connected)
 
-    # --- Вставка картинки ---
     def insert_image(self):
-        dialog = InsertImageDialog(self.root)
+        dialog = InsertImageDialog(self.root, self.img_size_var.get())
         if dialog.result:
-            source = dialog.result
-            self.text_editor.insert(tk.INSERT, f"[IMG:{source}]")
+            source, size = dialog.result
+            self.text_editor.insert(tk.INSERT, f"[IMG:{source}|{size}]")
             self.update_preview()
 
-    # --- Предпросмотр ---
+    def insert_qr(self):
+        dialog = InsertQRDialog(self.root, self.qr_size_var.get())
+        if dialog.result:
+            self.text_editor.insert(tk.INSERT, dialog.result)
+            self.update_preview()
+
     def auto_preview(self):
         if self.auto_preview_timer:
             self.root.after_cancel(self.auto_preview_timer)
@@ -217,7 +263,7 @@ class PrinterApp:
             self.preview_canvas.delete("all")
             return
         try:
-            img = self.renderer.render_to_image(text)
+            img = self.renderer.render_to_image(text, self.qr_size_var.get(), self.img_size_var.get())
             self.preview_image = img
             self.scale_factor = 1.0
             self._draw_preview()
@@ -231,7 +277,8 @@ class PrinterApp:
         w = int(self.preview_image.width * self.scale_factor)
         h = int(self.preview_image.height * self.scale_factor)
         resized = self.preview_image.resize((w, h), Image.Resampling.NEAREST)
-        self.preview_tk = ImageTk.BitmapImage(resized, foreground="black", background="white")
+        inverted = resized.point(lambda x: 1 - x)
+        self.preview_tk = ImageTk.BitmapImage(inverted, foreground="black", background="white")
         self.preview_canvas.delete("all")
         self.preview_canvas.create_image(w//2, h//2, image=self.preview_tk)
         self.preview_canvas.config(scrollregion=(0, 0, w, h))
@@ -244,7 +291,6 @@ class PrinterApp:
         self.scale_factor *= 0.8
         self._draw_preview()
 
-    # --- Печать ---
     def print_content(self):
         if not self.driver:
             messagebox.showwarning("Нет подключения", "Подключитесь к принтеру")
@@ -255,7 +301,7 @@ class PrinterApp:
             return
         self.status_var.set("Генерация изображения...")
         try:
-            img = self.renderer.render_to_image(text)
+            img = self.renderer.render_to_image(text, self.qr_size_var.get(), self.img_size_var.get())
         except Exception as e:
             messagebox.showerror("Ошибка рендеринга", str(e))
             return
@@ -267,6 +313,41 @@ class PrinterApp:
         def done(_=None):
             self.status_var.set("Печать завершена")
         self.async_task(print_job(), done)
+
+class InsertQRDialog(Toplevel):
+    def __init__(self, parent, default_size=3):
+        super().__init__(parent)
+        self.title("Вставить QR-код")
+        self.geometry("400x180")
+        self.result = None
+        self.resizable(False, False)
+
+        ttk.Label(self, text="Текст или ссылка для QR-кода:").pack(pady=10)
+        self.text_entry = ttk.Entry(self, width=50)
+        self.text_entry.pack(pady=5)
+
+        size_frame = ttk.Frame(self)
+        size_frame.pack(pady=5)
+        ttk.Label(size_frame, text="Размер:").pack(side=tk.LEFT)
+        self.size_var = tk.IntVar(value=default_size)
+        ttk.Scale(size_frame, from_=1, to=10, orient=tk.HORIZONTAL, 
+                  variable=self.size_var, length=150).pack(side=tk.LEFT, padx=5)
+        self.size_label = ttk.Label(size_frame, text=str(default_size), width=3)
+        self.size_label.pack(side=tk.LEFT)
+        self.size_var.trace('w', lambda *args: self.size_label.config(text=str(self.size_var.get())))
+
+        ttk.Button(self, text="Вставить", command=self.insert).pack(pady=10)
+
+        self.grab_set()
+        self.text_entry.focus_set()
+        self.wait_window()
+
+    def insert(self):
+        text = self.text_entry.get().strip()
+        if text:
+            size = self.size_var.get()
+            self.result = f"[QR:{text}|{size}]"
+            self.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
