@@ -165,7 +165,7 @@ class Renderer:
                 source = parts[0].strip()
                 img_scale = int(parts[1].strip()) / 100.0 if len(parts) > 1 else self.img_scale
                 
-                img = ImageManager.process_image(source)
+                img = ImageManager.process_image(source, invert=True)
                 new_w = int(img.width * img_scale)
                 new_h = int(img.height * img_scale)
                 img = img.resize((new_w, new_h), Image.Resampling.NEAREST)

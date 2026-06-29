@@ -7,7 +7,6 @@ import os
 class ImageManager:
     @staticmethod
     def load_image(source):
-        """Загружает изображение из URL или локального пути."""
         if source.startswith(('http://', 'https://')):
             with urllib.request.urlopen(source, timeout=10) as resp:
                 data = resp.read()
@@ -19,7 +18,6 @@ class ImageManager:
 
     @staticmethod
     def apply_brightness_contrast(img, brightness=0, contrast=1.0):
-        """Изменение яркости и контраста."""
         img = ImageOps.grayscale(img)
         arr = np.array(img, dtype=np.float32)
         arr += brightness
@@ -29,7 +27,6 @@ class ImageManager:
 
     @staticmethod
     def ordered_dither(img):
-        """Упорядоченный дизеринг (матрица Байера 4x4)."""
         bayer = np.array([[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]], dtype=np.float32)
         factor = 255.0 / 16.0
         arr = np.array(img, dtype=np.float32)
@@ -42,7 +39,6 @@ class ImageManager:
 
     @staticmethod
     def floyd_dither(img):
-        """Дизеринг Флойда-Стейнберга."""
         arr = np.array(img, dtype=np.float32)
         h, w = arr.shape
         for y in range(h):
@@ -63,31 +59,63 @@ class ImageManager:
 
     @staticmethod
     def simple_binarize(img):
-        """Пороговая бинаризация (128)."""
         arr = np.array(img, dtype=np.uint8)
         arr = np.where(arr < 128, 0, 255).astype(np.uint8)
         return Image.fromarray(arr, mode='L')
 
     @classmethod
-    def process_image(cls, source, width=384, brightness=0, contrast=1.0, dither='ordered'):
-        """Полный пайплайн обработки изображения для принтера."""
+    def process_image(cls, source, width=384, brightness=0, contrast=1.0,
+                      dither='floyd', invert=False, debug_prefix=None):
+        """
+        Обработка изображения для принтера.
+        :param invert: True – инвертировать цвета (чёрный ↔ белый)
+        :param debug_prefix: если задано, сохраняет промежуточные PNG с этим префиксом
+        """
+        print("[ImageManager] Используется ОБНОВЛЁННАЯ версия (с явным invert)")  # отладка
+
         img = cls.load_image(source)
-        # Масштабирование до ширины 384
         w_percent = width / float(img.size[0])
         h_size = int(float(img.size[1]) * w_percent)
         img = img.resize((width, h_size), Image.Resampling.LANCZOS)
+        if debug_prefix:
+            img.save(f"{debug_prefix}_0_resized.png")
+
         gray = cls.apply_brightness_contrast(img, brightness, contrast)
+        if debug_prefix:
+            gray.save(f"{debug_prefix}_1_gray.png")
+
+        # Автоконтраст для улучшения чёткости (оставляем, он полезен)
+        gray = ImageOps.autocontrast(gray, cutoff=0)
+        if debug_prefix:
+            gray.save(f"{debug_prefix}_2_autocontrast.png")
+
         if dither == 'ordered':
             dithered = cls.ordered_dither(gray)
         elif dither == 'floyd':
             dithered = cls.floyd_dither(gray)
         else:
             dithered = cls.simple_binarize(gray)
-        return dithered.convert('1')
+        if debug_prefix:
+            dithered.save(f"{debug_prefix}_3_dithered.png")
+
+        # Преобразуем в 1-бит (0=чёрный, 1=белый)
+        bw = dithered.convert('1')
+        if debug_prefix:
+            bw.save(f"{debug_prefix}_4_before_invert.png")
+
+        # Принудительная инверсия, если нужно
+        if invert:
+            bw = ImageOps.invert(bw)
+            print("[ImageManager] Выполнена инверсия (invert=True)")
+            if debug_prefix:
+                bw.save(f"{debug_prefix}_5_after_invert.png")
+        else:
+            print("[ImageManager] Инверсия НЕ выполнялась (invert=False)")
+
+        return bw
 
     @staticmethod
     def to_printer_bytes(img: Image.Image):
-        """Преобразует 1-битное изображение 384xH в байты для принтера."""
         w, h = img.size
         if w != 384:
             raise ValueError("Ширина должна быть 384 пикселя")
